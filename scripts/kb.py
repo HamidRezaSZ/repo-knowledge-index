@@ -138,7 +138,7 @@ def parse_frontmatter(block: str, where: Path) -> dict:
 
 
 def parse_document(path: Path) -> tuple[dict, str]:
-    raw = path.read_text(encoding="utf-8-sig")  # -sig: tolerate a byte-order mark from Windows editors
+    raw = path.read_text(encoding="utf-8-sig")  # -sig drops a byte-order mark (Windows editors)
     match = FRONTMATTER.match(raw)
     if not match:
         raise ValueError(f"{path}: missing YAML frontmatter")
