@@ -11,6 +11,7 @@ import sqlite3
 import sys
 from contextlib import closing
 from pathlib import Path
+from typing import NamedTuple
 
 FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
 FIELDS = ("id", "title", "summary", "aliases", "tags", "related")
@@ -24,6 +25,13 @@ HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
 WORD = re.compile(r"\w+", re.UNICODE)
 SLUG = re.compile(r"[^\w-]+", re.UNICODE)
 RESERVED = ("index.md", "log.md")  # OKF navigation and change-history files; never indexed
+
+
+class Section(NamedTuple):
+    heading: str  # e.g. "Configuration"
+    heading_path: str  # the heading with its parents, e.g. "Postgres > Configuration"
+    slug: str  # unique within the document
+    content: str
 
 
 def plain(text: str) -> str:
@@ -148,10 +156,11 @@ def parse_document(path: Path) -> tuple[dict, str]:
     return metadata, raw[match.end():]
 
 
-def sections(body: str) -> list[tuple[str, str, str]]:
+def sections(body: str) -> list[Section]:
     """Split on Markdown ATX headings, excluding fenced code blocks."""
-    result: list[tuple[str, str, str]] = []
-    heading, lines = "Overview", []
+    result: list[Section] = []
+    trail: list[tuple[int, str]] = []  # (level, text) of the current heading and its parents
+    lines: list[str] = []
     used: set[str] = set()
     fence_char, fence_len = "", 0
 
@@ -159,13 +168,15 @@ def sections(body: str) -> list[tuple[str, str, str]]:
         nonlocal lines
         content = "".join(lines).strip()
         if content:
+            heading = trail[-1][1] if trail else "Overview"
             base = SLUG.sub("-", heading.casefold()).strip("-") or "section"
             slug, number = base, 1
             while slug in used:  # also avoids clashing with a real heading such as "Example-2"
                 number += 1
                 slug = f"{base}-{number}"
             used.add(slug)
-            result.append((heading, slug, content))
+            heading_path = " > ".join(text for _, text in trail) or heading
+            result.append(Section(heading, heading_path, slug, content))
         lines = []
 
     for line in body.splitlines(keepends=True):
@@ -179,11 +190,14 @@ def sections(body: str) -> list[tuple[str, str, str]]:
         match = HEADING.match(line.rstrip("\r\n")) if not fence_char else None
         if match:
             flush()
-            heading = match.group(2).strip()
+            level = len(match.group(1))
+            while trail and trail[-1][0] >= level:
+                trail.pop()
+            trail.append((level, match.group(2).strip()))
         else:
             lines.append(line)
     flush()
-    return result or [("Overview", "overview", "")]
+    return result or [Section("Overview", "Overview", "overview", "")]
 
 
 def locations(root: Path) -> tuple[Path, Path]:
@@ -238,10 +252,10 @@ def build(root: Path) -> dict:
             if not alias or alias in aliases:
                 raise ValueError(f"Empty or duplicate alias: {alias!r}")
             aliases[alias] = key
-        for label, slug, content in sections(body):
-            rows.append((key, rel, label, slug, meta["title"],
+        for section in sections(body):
+            rows.append((key, rel, section.heading_path, section.slug, meta["title"],
                          " ".join(meta["tags"] + meta["aliases"]),
-                         meta["summary"], content))
+                         meta["summary"], section.content))
     for key, entry in docs.items():
         if key in aliases and aliases[key] != key:
             raise ValueError(f"ID conflicts with alias: {key}")
@@ -314,24 +328,25 @@ def get(root: Path, identifier: str, *, summary: bool = False, section: str | No
     return result
 
 
-def find_section(found: list[tuple[str, str, str]], wanted: str) -> str:
+def find_section(found: list[Section], wanted: str) -> str:
     """Content of the section with this exact slug, or else the only one with this heading.
 
-    Slugs match exactly (they are lowercase, as search prints them) and headings match
-    case-insensitively, so "Configuration" shared by two sections is reported as ambiguous.
+    Slugs match exactly (they are lowercase, as search prints them). Headings, or heading
+    paths such as "Postgres > Configuration", match case-insensitively, so a heading that
+    two sections share is reported as ambiguous instead of guessed.
     """
-    for _, slug, content in found:
-        if slug == wanted:
-            return content
-    named = [(slug, content) for heading, slug, content in found
-             if heading.casefold() == wanted.casefold()]
+    for section in found:
+        if section.slug == wanted:
+            return section.content
+    named = [section for section in found
+             if wanted.casefold() in (section.heading.casefold(), section.heading_path.casefold())]
     if len(named) == 1:
-        return named[0][1]
+        return named[0].content
     if named:
         raise ValueError(f"Section {wanted!r} is ambiguous; use a slug: "
-                         + ", ".join(slug for slug, _ in named))
+                         + ", ".join(section.slug for section in named))
     raise ValueError(f"Unknown section {wanted!r}; sections: "
-                     + ", ".join(slug for _, slug, _ in found))
+                     + ", ".join(section.slug for section in found))
 
 
 def search(root: Path, query: str, limit: int = 5) -> list[dict]:

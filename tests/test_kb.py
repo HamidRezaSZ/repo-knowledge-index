@@ -69,8 +69,8 @@ class KBTests(unittest.TestCase):
     def test_fenced_headings_not_sections(self):
         body = "# Usage\nRun command.\n" + "\x60\x60\x60markdown\n# Fake heading\n\x60\x60\x60\n## Real\nActual details.\n"
         result = kb.sections(body)
-        self.assertEqual([row[0] for row in result], ["Usage", "Real"])
-        self.assertIn("# Fake heading", result[0][2])
+        self.assertEqual([section.heading for section in result], ["Usage", "Real"])
+        self.assertIn("# Fake heading", result[0].content)
 
     def test_duplicate_headings_resolve_unambiguously(self):
         body = ("# Redis\n## Configuration\nSet maxmemory-policy.\n"
@@ -78,7 +78,7 @@ class KBTests(unittest.TestCase):
                 "# Example\na\n# Example-2\nb\n# Example\nc\n")
         self.put("db.md", sample("db", body=body))
         kb.build(self.root)
-        self.assertEqual([slug for _, slug, _ in kb.sections(body)],
+        self.assertEqual([section.slug for section in kb.sections(body)],
                          ["configuration", "configuration-2", "example", "example-2", "example-3"])
         hit = kb.search(self.root, "shared_buffers")[0]
         self.assertEqual(kb.get(self.root, "db", section=hit["slug"])["content"],
@@ -94,8 +94,23 @@ class KBTests(unittest.TestCase):
 
     def test_heading_text_keeps_trailing_hash(self):
         body = "# C#\na\n# F# tips\nb\n# Use C#  \nc\n# Closed ##\nd\n## Spaced  ###  \ne\n#hashtag\nf\n"
-        self.assertEqual([row[0] for row in kb.sections(body)],
+        self.assertEqual([section.heading for section in kb.sections(body)],
                          ["C#", "F# tips", "Use C#", "Closed", "Spaced"])
+
+    def test_parent_headings_are_searchable(self):
+        body = ("# Redis\n## Configuration\nSet maxmemory-policy.\n"
+                "# Postgres\n## Configuration\nSet shared_buffers.\n"
+                "### Pooling\nUse a pooler.\n## Backups\nNightly.\n")
+        self.assertEqual([section.heading_path for section in kb.sections(body)],
+                         ["Redis > Configuration", "Postgres > Configuration",
+                          "Postgres > Configuration > Pooling", "Postgres > Backups"])
+        self.put("db.md", sample("db", body=body))
+        kb.build(self.root)
+        hits = kb.search(self.root, "redis")
+        self.assertEqual([(hit["slug"], hit["heading"]) for hit in hits],
+                         [("configuration", "Redis > Configuration")])
+        self.assertEqual(kb.get(self.root, "db", section="postgres > configuration")["content"],
+                         "Set shared_buffers.")
 
     def test_rebuild_discards_deleted_document(self):
         self.put("a.md", sample("old"))
