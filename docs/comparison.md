@@ -4,7 +4,7 @@
 
 How should a coding agent discover relevant, Git-versioned project knowledge without loading the full repository into its context? The compared methods are **not all competitors**: Markdown/OKF are source formats; AGENTS.md and CLAUDE.md provide agent instructions; MCP is an integration interface; grep, FTS, vector and graph retrieval are discovery mechanisms.
 
-**Default recommendation:** keep human-readable Markdown with YAML metadata in Git; provide stable IDs and a generated JSON alias index for known-key lookups; use SQLite FTS5/BM25 on sections for unfamiliar lexical questions; return small snippets before fetching the selected section. This is a low-dependency design recommendation, not proof that the method outperforms everything.
+**Default recommendation:** keep human-readable Markdown with YAML metadata in Git; provide stable IDs and a generated JSON alias index for known-key lookups; use SQLite FTS5/BM25 on sections for unfamiliar lexical questions; return small snippets before fetching the selected section. This is a low-dependency design choice; what has actually been measured is in [evaluation.md](evaluation.md).
 
 ## Comparison matrix
 
@@ -25,7 +25,7 @@ How should a coding agent discover relevant, Git-versioned project knowledge wit
 
 For N documents and T bytes of text: a full text scan has O(T) worst-case work, although practical implementations such as ripgrep are highly optimized, and an early positive scan may finish quickly. Loading a JSON mapping costs O(N), then keyed in-memory lookup is expected O(1), *excluding loading and file IO*. FTS5 uses inverted lists: retrieval and rank costs depend on postings touched, query and result sizes. Brute-force vector search compares N vectors of d dimensions with O(Nd) arithmetic; ANN complexity is algorithm- and data-dependent, with recall trade-offs. Graph queries depend on their graph pattern and cardinality. Neither average query latency nor agent token cost is O(1) merely because a JSON map exists.
 
-**Token efficiency is a policy.** All methods can return either a short section or the entire document. Compare them under equal context budgets, with a declared tokenizer, answer quality labels, search/tool latency and indexing/maintenance measurements before claiming a winner.
+**Token efficiency is a policy.** All methods can return either a short section or the entire document. Compare them under equal context budgets, with a declared tokenizer, answer quality labels, search/tool latency and indexing/maintenance measurements.
 
 ## Practical decision path
 
@@ -38,12 +38,10 @@ For N documents and T bytes of text: a full text scan has O(T) worst-case work, 
 
 ## Primary sources
 
-- [Google Cloud Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — Markdown/YAML structure, optional index.md, provenance, format vs runtime. **This project's schema is inspired by OKF but not conformant**: OKF requires a type field and derives concept IDs from paths.
+- [Google Cloud Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — Markdown/YAML structure, optional index.md, provenance, format vs runtime. How this project's schema differs is in the [README](../README.md#knowledge-format).
 - [AGENTS.md](https://agents.md/) — agent instructions convention, not retrieval indexing.
 - [SQLite FTS5 manual](https://www.sqlite.org/fts5.html) — MATCH, tokenizer, snippets, BM25 ranking.
 - [ripgrep](https://github.com/BurntSushi/ripgrep) — text-search implementation and baseline.
 - [FAISS](https://github.com/facebookresearch/faiss) — vector index and similarity retrieval.
 - [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18) — client/tool protocol.
 - [OpenAI retrieval documentation](https://platform.openai.com/docs/guides/retrieval) — semantic retrieval concepts.
-
-None of these references establishes a numerical victory of this implementation over vector/hybrid or native ripgrep. Local synthetic data is documented separately in [evaluation.md](evaluation.md).
