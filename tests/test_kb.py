@@ -94,6 +94,15 @@ class KBTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tags must be a list"):
             kb.build(self.root)
 
+    def test_reserved_file_names(self):
+        self.put("a.md", sample("a"))
+        self.put("index.md", "# Catalog\n- [A](a.md)\n")
+        self.put("guides/log.md", "---\ntype: log\n---\n# 2026-10-24\nChanged A.\n")
+        self.assertEqual(kb.build(self.root)["documents"], 1)  # reserved files are skipped
+        self.put("guides/log.md", sample("changelog"))
+        with self.assertRaisesRegex(ValueError, "guides/log.md: index.md and log.md are reserved"):
+            kb.build(self.root)
+
     def test_files_outside_repository_are_not_indexed(self):
         outside = tempfile.TemporaryDirectory()
         self.addCleanup(outside.cleanup)

@@ -35,7 +35,7 @@ related: [authorization]
 Rotate refresh tokens and reject replay.
 ```
 
-Required fields: `id`, `title`, `summary`. Optional: `aliases`, `tags`, `related` (all lists of strings). IDs must be unique lowercase path-safe strings and related IDs must exist. Files and IDs may be relocated independently, provided identifiers remain stable. Files must live inside the repository: a symlinked file that points outside it is rejected, and symlinked directories are not followed. Markdown is split into ATX-heading sections; SQL BM25 ranks heading, title, tags, summary and section text. This schema is **OKF-inspired, not fully OKF-v0.2-compliant** (OKF requires `type` and uses path-derived concept IDs).
+Required fields: `id`, `title`, `summary`. Optional: `aliases`, `tags`, `related` (all lists of strings). IDs must be unique lowercase path-safe strings and related IDs must exist. Files and IDs may be relocated independently, provided identifiers remain stable. Files must live inside the repository: a symlinked file that points outside it is rejected, and symlinked directories are not followed. Files named `index.md` or `log.md` are reserved for navigation and change history (as in OKF) and are never indexed; the build fails if one declares an `id`. Markdown is split into ATX-heading sections; SQL BM25 ranks heading, title, tags, summary and section text. This schema is **OKF-inspired, not fully OKF-v0.2-compliant** (OKF requires `type` and uses path-derived concept IDs).
 
 ## Retrieval flow
 

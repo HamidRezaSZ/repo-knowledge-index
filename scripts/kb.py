@@ -18,6 +18,7 @@ FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
 HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
 WORD = re.compile(r"\w+", re.UNICODE)
 SLUG = re.compile(r"[^\w-]+", re.UNICODE)
+RESERVED = ("index.md", "log.md")  # OKF navigation and change-history files; never indexed
 
 
 def parse_document(path: Path) -> tuple[dict, str]:
@@ -100,13 +101,17 @@ def build(root: Path) -> dict:
     root = root.resolve()
     docs, aliases, rows = {}, {}, []
     for path in source_files(root):
-        if path.name in ("index.md", "log.md"):
+        rel = path.relative_to(root).as_posix()
+        if path.name in RESERVED:
+            match = FRONTMATTER.match(path.read_text(encoding="utf-8-sig"))
+            if match and re.search(r"^id[ \t]*:", match.group(1), re.MULTILINE):
+                raise ValueError(f"{rel}: index.md and log.md are reserved and never indexed; "
+                                 "rename the file to index it")
             continue
         meta, body = parse_document(path)
         key = meta["id"]
         if key in docs:
             raise ValueError(f"Duplicate id: {key}")
-        rel = path.relative_to(root).as_posix()
         docs[key] = {"path": rel, "title": meta["title"], "summary": meta["summary"],
                      "tags": meta["tags"], "related": meta["related"]}
         for alias in meta["aliases"]:
