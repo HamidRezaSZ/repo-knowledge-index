@@ -12,7 +12,7 @@ Requires Python 3.10+ with SQLite FTS5 enabled (standard in python.org and most 
 python scripts/kb.py build
 python scripts/kb.py search "refresh token" --limit 5
 python scripts/kb.py get authentication --summary
-python scripts/kb.py get auth --section "Refresh tokens"
+python scripts/kb.py get auth --section refresh-tokens
 python -m unittest discover -s tests -v
 python -m benchmarks.compare --docs 300 --repeats 20
 ```

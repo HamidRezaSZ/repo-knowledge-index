@@ -72,6 +72,26 @@ class KBTests(unittest.TestCase):
         self.assertEqual([row[0] for row in result], ["Usage", "Real"])
         self.assertIn("# Fake heading", result[0][2])
 
+    def test_duplicate_headings_resolve_unambiguously(self):
+        body = ("# Redis\n## Configuration\nSet maxmemory-policy.\n"
+                "# Postgres\n## Configuration\nSet shared_buffers.\n"
+                "# Example\na\n# Example-2\nb\n# Example\nc\n")
+        self.put("db.md", sample("db", body=body))
+        kb.build(self.root)
+        self.assertEqual([slug for _, slug, _ in kb.sections(body)],
+                         ["configuration", "configuration-2", "example", "example-2", "example-3"])
+        hit = kb.search(self.root, "shared_buffers")[0]
+        self.assertEqual(kb.get(self.root, "db", section=hit["slug"])["content"],
+                         "Set shared_buffers.")
+        self.assertEqual(kb.get(self.root, "db", section="example-3")["content"], "c")
+        self.assertEqual(kb.get(self.root, "db", section="Example-2")["content"], "b")
+        self.assertEqual(kb.get(self.root, "db", section="configuration")["content"],
+                         "Set maxmemory-policy.")  # an exact slug, not the shared heading
+        with self.assertRaisesRegex(ValueError, "ambiguous; use a slug: configuration, configur"):
+            kb.get(self.root, "db", section="Configuration")
+        with self.assertRaisesRegex(ValueError, "Unknown section 'nope'; sections: configuration,"):
+            kb.get(self.root, "db", section="nope")
+
     def test_heading_text_keeps_trailing_hash(self):
         body = "# C#\na\n# F# tips\nb\n# Use C#  \nc\n# Closed ##\nd\n## Spaced  ###  \ne\n#hashtag\nf\n"
         self.assertEqual([row[0] for row in kb.sections(body)],

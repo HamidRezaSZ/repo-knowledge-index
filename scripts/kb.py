@@ -152,17 +152,19 @@ def sections(body: str) -> list[tuple[str, str, str]]:
     """Split on Markdown ATX headings, excluding fenced code blocks."""
     result: list[tuple[str, str, str]] = []
     heading, lines = "Overview", []
-    used: dict[str, int] = {}
+    used: set[str] = set()
     fence_char, fence_len = "", 0
 
     def flush() -> None:
         nonlocal lines
         content = "".join(lines).strip()
         if content:
-            slug = SLUG.sub("-", heading.casefold()).strip("-") or "section"
-            used[slug] = used.get(slug, 0) + 1
-            if used[slug] > 1:
-                slug += f"-{used[slug]}"
+            base = SLUG.sub("-", heading.casefold()).strip("-") or "section"
+            slug, number = base, 1
+            while slug in used:  # also avoids clashing with a real heading such as "Example-2"
+                number += 1
+                slug = f"{base}-{number}"
+            used.add(slug)
             result.append((heading, slug, content))
         lines = []
 
@@ -308,14 +310,28 @@ def get(root: Path, identifier: str, *, summary: bool = False, section: str | No
     if not path.is_file():
         raise ValueError(f"{entry['path']} no longer exists; the index is stale (run 'build')")
     _, body = parse_document(path)
-    if section is not None:
-        found = next((content for heading, slug, content in sections(body)
-                      if section.casefold() in (heading.casefold(), slug.casefold())), None)
-        if found is None:
-            raise ValueError(f"Unknown section: {section}")
-        body = found
-    result["content"] = body
+    result["content"] = body if section is None else find_section(sections(body), section)
     return result
+
+
+def find_section(found: list[tuple[str, str, str]], wanted: str) -> str:
+    """Content of the section with this exact slug, or else the only one with this heading.
+
+    Slugs match exactly (they are lowercase, as search prints them) and headings match
+    case-insensitively, so "Configuration" shared by two sections is reported as ambiguous.
+    """
+    for _, slug, content in found:
+        if slug == wanted:
+            return content
+    named = [(slug, content) for heading, slug, content in found
+             if heading.casefold() == wanted.casefold()]
+    if len(named) == 1:
+        return named[0][1]
+    if named:
+        raise ValueError(f"Section {wanted!r} is ambiguous; use a slug: "
+                         + ", ".join(slug for slug, _ in named))
+    raise ValueError(f"Unknown section {wanted!r}; sections: "
+                     + ", ".join(slug for _, slug, _ in found))
 
 
 def search(root: Path, query: str, limit: int = 5) -> list[dict]:
