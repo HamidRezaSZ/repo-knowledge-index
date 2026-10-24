@@ -272,7 +272,7 @@ def build(root: Path) -> dict:
         with closing(sqlite3.connect(tmp_db)) as conn:
             conn.execute("CREATE VIRTUAL TABLE sections USING fts5("
                          "id UNINDEXED, path UNINDEXED, heading, slug UNINDEXED, "
-                         "title, tags, summary, content, tokenize='unicode61')")
+                         "title, tags, summary, content, tokenize='porter unicode61')")
             conn.executemany("INSERT INTO sections VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
             conn.commit()
         tmp_json.write_text(json.dumps(index, indent=2, ensure_ascii=False, sort_keys=True) + "\n",

@@ -58,7 +58,7 @@ FTS5 query costs depend on posting-list sizes and ranking; the `O(1)` claim appl
 
 ## Limitations
 
-The index rebuilds in full, uses SQLite's default Unicode tokenization, and doesn't implement semantic recall, incremental reindexing, graph queries or an MCP server. Markdown parsing handles ATX headings and fenced code blocks, not every CommonMark edge case. No LLM tokenizer or end-to-end agent test is included. See the docs for tradeoffs.
+The index rebuilds in full and uses SQLite's Porter stemmer over Unicode tokens, so English word forms match ("revoke" finds "revoked") while other languages match whole words only. It doesn't implement semantic recall, incremental reindexing, graph queries or an MCP server. Markdown parsing handles ATX headings and fenced code blocks, not every CommonMark edge case. No LLM tokenizer or end-to-end agent test is included. See the docs for tradeoffs.
 
 ## License
 

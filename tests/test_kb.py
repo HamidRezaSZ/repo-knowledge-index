@@ -52,6 +52,15 @@ class KBTests(unittest.TestCase):
         self.assertEqual(scores, sorted(scores))  # bm25: lower is better, best first
         self.assertEqual(kb.search(self.root, "!!!!"), [])
 
+    def test_search_matches_other_word_forms(self):
+        body = ("# Refresh\nRotate refresh credentials. Revoked sessions are refused. "
+                "Invalidate keys.\n")
+        self.put("a.md", sample("auth", body=body))
+        kb.build(self.root)
+        for query in ("rotating", "revoke", "invalidation", "credential"):
+            slugs = [hit["slug"] for hit in kb.search(self.root, query)]
+            self.assertEqual(slugs, ["refresh"], query)
+
     def test_duplicates_and_conflicts(self):
         self.put("a.md", sample("auth", aliases="[login]"))
         self.put("b.md", sample("auth"))
