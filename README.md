@@ -1,6 +1,6 @@
 # Repo Knowledge Index
 
-A small, Git-native knowledge-retrieval prototype for AI coding agents. Source knowledge remains readable Markdown with YAML frontmatter; generated artifacts are a JSON ID/alias index and a local SQLite FTS5 section index. The CLI returns compact JSON results so agents can fetch selected sections rather than putting an entire repository into context.
+A small, Git-native knowledge-retrieval prototype for AI coding agents. Source knowledge remains readable Markdown with YAML frontmatter; generated artifacts are a JSON ID/alias index and a local SQLite FTS5 section index. The CLI prints compact plain text (or compact JSON with `--json`) so agents can fetch selected sections rather than putting an entire repository into context.
 
 **Status:** Functional lexical retrieval prototype and reproducible synthetic benchmark. Not a semantic/vector search engine or a validated winner across all projects. Read [the comparative research](docs/comparison.md) and [evaluation limitations](docs/evaluation.md).
 
@@ -12,10 +12,19 @@ Requires Python 3.10+ with SQLite FTS5 enabled (standard in python.org and most 
 python scripts/kb.py build
 python scripts/kb.py search "refresh token" --limit 5
 python scripts/kb.py get authentication --summary
-python scripts/kb.py get auth --section refresh-tokens
+python scripts/kb.py get auth#refresh-tokens
 python -m unittest discover -s tests -v
 python -m benchmarks.compare --docs 300 --repeats 20
 ```
+
+`search` prints one header line per matching document, then one line per section starting with a ready-to-use reference:
+
+```text
+knowledge/authentication.md  Authentication and Session Lifecycle
+  authentication#refresh-tokens  Refresh tokens: Refresh tokens allow a client to obtain another access token. Rotate refresh credentials and reject replay of an...
+```
+
+`get` accepts that reference, or an id, alias or file path with an optional `#slug`, and prints the citation path on its first line, then the text. Add `--json` to any command for compact JSON; search scores there are BM25-based, and higher is better.
 
 The source knowledge directory is `knowledge/`. The generated local artifacts live in `.knowledge/` and are ignored by Git. `search` and `get` rebuild them automatically when any knowledge file (or `kb.py` itself) changes, detected by a content hash. `build` does the same on demand and is what CI runs to validate the documents.
 
@@ -41,7 +50,7 @@ Required fields: `id`, `title`, `summary`. Optional: `aliases`, `tags`, `related
 1. A user asks about a project topic.
 2. An agent tries a known ID or alias through the JSON index (average O(1) map lookup *after loading the JSON*).
 3. If no known ID exists, the agent queries FTS5 for ranked sections. Query terms are safely quoted and combined with OR. Search is lexical, not semantic.
-4. The agent inspects titles, snippets, scores, and paths, then requests the exact section it needs.
+4. The agent inspects titles, heading paths and snippets, then requests the exact section it needs by its `id#slug` reference.
 5. Only selected text is presented to the model, preserving original file paths for citations.
 
 FTS5 query costs depend on posting-list sizes and ranking; the `O(1)` claim applies **only** to an in-memory hash lookup of a known ID or alias, not natural-language search or disk I/O.

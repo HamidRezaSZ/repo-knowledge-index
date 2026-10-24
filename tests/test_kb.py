@@ -49,7 +49,7 @@ class KBTests(unittest.TestCase):
         self.assertEqual(hits[0]["id"], "auth")
         self.assertEqual(hits[0]["slug"], "how-it-works")
         scores = [hit["score"] for hit in kb.search(self.root, "token cache security")]
-        self.assertEqual(scores, sorted(scores))  # bm25: lower is better, best first
+        self.assertEqual(scores, sorted(scores, reverse=True))  # higher is better, best first
         self.assertEqual(kb.search(self.root, "!!!!"), [])
 
     def test_search_matches_other_word_forms(self):
@@ -211,11 +211,42 @@ class KBTests(unittest.TestCase):
 
     def test_cli_rebuilds_stale_or_missing_index(self):
         self.put("a.md", sample("alpha"))
-        code, out, _ = self.cli("search", "token")  # no build has run yet
+        code, out, _ = self.cli("search", "token", "--json")  # no build has run yet
         self.assertEqual((code, json.loads(out)[0]["id"]), (0, "alpha"))
         self.put("a.md", sample("alpha", title="Renamed"))
-        code, out, _ = self.cli("get", "alpha", "--summary")
+        code, out, _ = self.cli("get", "alpha", "--summary", "--json")
         self.assertEqual((code, json.loads(out)["title"]), (0, "Renamed"))
+
+    def test_cli_text_output_and_refs(self):
+        self.put("auth.md", sample("auth", title="Auth", aliases="[login]",
+                                   body="# Refresh tokens\nRotate refresh\ntokens on use.\n"
+                                        "# Other\nUnrelated.\n"))
+        self.assertEqual(self.cli("build"), (0, "indexed 1 documents, 2 sections\n", ""))
+        self.assertEqual(self.cli("search", "rotate")[1],
+                         "knowledge/auth.md  Auth\n"
+                         "  auth#refresh-tokens  Refresh tokens: Rotate refresh tokens on use.\n")
+        self.assertEqual(self.cli("get", "login#refresh-tokens")[1],
+                         "knowledge/auth.md#refresh-tokens  Auth > Refresh tokens\n\n"
+                         "Rotate refresh\ntokens on use.\n")
+        self.assertEqual(self.cli("get", "knowledge/auth.md#other")[1].splitlines()[-1],
+                         "Unrelated.")
+        self.assertEqual(self.cli("get", "auth", "--summary")[1],
+                         "auth  Auth\npath: knowledge/auth.md\nsummary: About auth.\n"
+                         "tags: security\n")
+        self.assertEqual(self.cli("search", "zebra")[1], "no matches\n")
+        self.assertEqual(self.cli("get", "auth#other", "--section", "other"),
+                         (1, "", "error: give the section either as <id>#<slug> or with "
+                                 "--section, not both\n"))
+
+    def test_cli_json_output_is_compact(self):
+        self.put("auth.md", sample("auth"))
+        code, out, _ = self.cli("search", "rotation", "--json")
+        groups = json.loads(out)
+        self.assertEqual((code, out.count("\n")), (0, 1))  # one line, no indentation
+        self.assertEqual(groups[0]["sections"][0]["ref"], "auth#how-it-works")
+        self.assertEqual(sorted(groups[0]), ["id", "path", "sections", "title"])
+        self.assertEqual(json.loads(self.cli("get", "auth#how-it-works", "--json")[1])["content"],
+                         "Token rotation protects accounts.")
 
     def test_database_connections_are_closed(self):
         opened = []

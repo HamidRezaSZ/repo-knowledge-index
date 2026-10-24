@@ -306,30 +306,50 @@ def ensure_index(root: Path) -> dict:
     return index
 
 
-def get(root: Path, identifier: str, *, summary: bool = False, section: str | None = None,
+def resolve(index: dict, name: str) -> str:
+    """The document id for an id, an alias, or an indexed file path."""
+    key = index["by_alias"].get(name.casefold(), name.casefold())
+    if key not in index["by_id"]:  # a path, as printed in results and citations
+        key = next((doc for doc, entry in index["by_id"].items() if entry["path"] == name), key)
+    if key not in index["by_id"]:
+        raise ValueError(f"Unknown id, alias or path: {name}")
+    return key
+
+
+def get(root: Path, ref: str, *, summary: bool = False, section: str | None = None,
         index: dict | None = None) -> dict:
+    """A document's metadata (summary=True), its whole body, or one section.
+
+    `ref` is an id, alias or path, optionally followed by `#slug` as search prints it.
+    """
     if index is None:
         index = load_index(root)
-    key = identifier.casefold()
-    key = index["by_alias"].get(key, key)
-    entry = index["by_id"].get(key)
-    if entry is None:
-        raise ValueError(f"Unknown id or alias: {identifier}")
-    result = {"id": key, **entry}
+    name, _, slug = ref.partition("#")
+    if slug and section is not None:
+        raise ValueError("give the section either as <id>#<slug> or with --section, not both")
+    section = slug or section
+    if summary and section:
+        raise ValueError("--summary and a section are mutually exclusive")
+    key = resolve(index, name)
+    entry = index["by_id"][key]
     if summary:
-        return result
+        return {"id": key, **entry}
     path = (root.resolve() / entry["path"]).resolve()
     if not path.is_relative_to(root.resolve()):
         raise ValueError("Unsafe indexed path")
     if not path.is_file():
         raise ValueError(f"{entry['path']} no longer exists; the index is stale (run 'build')")
     _, body = parse_document(path)
-    result["content"] = body if section is None else find_section(sections(body), section)
-    return result
+    result = {"id": key, "path": entry["path"], "title": entry["title"]}
+    if section:
+        found = find_section(sections(body), section)
+        result.update(slug=found.slug, heading=found.heading_path)
+        body = found.content
+    return {**result, "content": body}
 
 
-def find_section(found: list[Section], wanted: str) -> str:
-    """Content of the section with this exact slug, or else the only one with this heading.
+def find_section(found: list[Section], wanted: str) -> Section:
+    """The section with this exact slug, or else the only one with this heading.
 
     Slugs match exactly (they are lowercase, as search prints them). Headings, or heading
     paths such as "Postgres > Configuration", match case-insensitively, so a heading that
@@ -337,11 +357,11 @@ def find_section(found: list[Section], wanted: str) -> str:
     """
     for section in found:
         if section.slug == wanted:
-            return section.content
+            return section
     named = [section for section in found
              if wanted.casefold() in (section.heading.casefold(), section.heading_path.casefold())]
     if len(named) == 1:
-        return named[0].content
+        return named[0]
     if named:
         raise ValueError(f"Section {wanted!r} is ambiguous; use a slug: "
                          + ", ".join(section.slug for section in named))
@@ -350,6 +370,7 @@ def find_section(found: list[Section], wanted: str) -> str:
 
 
 def search(root: Path, query: str, limit: int = 5) -> list[dict]:
+    """The best-matching sections, best first. A higher score is a better match."""
     _, db_path = locations(root)
     if not db_path.is_file():
         raise ValueError("Search database missing; run 'build' first")
@@ -358,43 +379,87 @@ def search(root: Path, query: str, limit: int = 5) -> list[dict]:
         return []
     expression = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
     # bm25 weights per column: id, path, heading, slug, title, tags, summary, content.
-    sql = ("SELECT id, path, heading, slug, title, summary, "
-           "snippet(sections, 7, '', '', ' … ', 18), "
+    sql = ("SELECT id, path, title, heading, slug, "
+           "snippet(sections, 7, '', '', '...', 18), "
            "bm25(sections, 0, 0, 4, 0, 6, 5, 4, 1) AS score "
            "FROM sections WHERE sections MATCH ? ORDER BY score LIMIT ?")
     with closing(sqlite3.connect(db_path)) as conn:
         records = conn.execute(sql, (expression, limit)).fetchall()
-    return [dict(zip(("id", "path", "heading", "slug", "title", "summary", "snippet", "score"), r))
-            for r in records]
+    return [{"id": doc, "path": path, "title": title, "heading": heading, "slug": slug,
+             "snippet": one_line(snippet), "score": round(-score, 3)}  # bm25: lower is better
+            for doc, path, title, heading, slug, snippet, score in records]
+
+
+def one_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def group_hits(hits: list[dict]) -> list[dict]:
+    """Hits grouped by document, so a document's path and title are printed once."""
+    groups: dict[str, dict] = {}
+    for hit in hits:
+        group = groups.setdefault(hit["id"], {"id": hit["id"], "path": hit["path"],
+                                              "title": hit["title"], "sections": []})
+        group["sections"].append({"ref": f"{hit['id']}#{hit['slug']}", "heading": hit["heading"],
+                                  "snippet": hit["snippet"], "score": hit["score"]})
+    return list(groups.values())
+
+
+def render_search(groups: list[dict]) -> str:
+    """A header line per document, then one `ref  heading: snippet` line per section."""
+    if not groups:
+        return "no matches"
+    lines = []
+    for group in groups:
+        lines.append(f"{group['path']}  {one_line(group['title'])}")
+        lines += [f"  {s['ref']}  {s['heading']}: {s['snippet']}" for s in group["sections"]]
+    return "\n".join(lines)
+
+
+def render_get(result: dict) -> str:
+    if "content" not in result:  # --summary
+        lines = [f"{result['id']}  {one_line(result['title'])}", f"path: {result['path']}",
+                 f"summary: {one_line(result['summary'])}"]
+        lines += [f"{field}: {', '.join(result[field])}"
+                  for field in ("tags", "related") if result[field]]
+        return "\n".join(lines)
+    where = result["path"] + (f"#{result['slug']}" if "slug" in result else "")
+    label = one_line(result["title"]) + (f" > {result['heading']}" if "heading" in result else "")
+    return f"{where}  {label}\n\n{result['content']}"
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("--json", action="store_true", help="print compact JSON instead of text")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("build")
-    q = commands.add_parser("search")
+    commands.add_parser("build", parents=[shared],
+                        help="validate the knowledge files and rebuild the index")
+    q = commands.add_parser("search", parents=[shared], help="find the best-matching sections")
     q.add_argument("query")
     q.add_argument("--limit", type=int, default=5)
-    g = commands.add_parser("get")
-    g.add_argument("id")
-    g.add_argument("--summary", action="store_true")
-    g.add_argument("--section")
+    g = commands.add_parser("get", parents=[shared],
+                            help="print a document, its summary, or one section")
+    g.add_argument("ref", help="id, alias or path, optionally with #slug, e.g. auth#refresh-tokens")
+    g.add_argument("--summary", action="store_true", help="metadata only")
+    g.add_argument("--section", help="a section slug, or a heading only one section has")
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
             output = build(args.root)
+            text = f"indexed {output['documents']} documents, {output['sections']} sections"
         elif args.command == "search":
             if not 1 <= args.limit <= 100:
                 raise ValueError("--limit must be between 1 and 100")
             ensure_index(args.root)
-            output = search(args.root, args.query, args.limit)
+            output = group_hits(search(args.root, args.query, args.limit))
+            text = render_search(output)
         else:
-            if args.summary and args.section:
-                raise ValueError("--summary and --section are mutually exclusive")
-            output = get(args.root, args.id, summary=args.summary, section=args.section,
+            output = get(args.root, args.ref, summary=args.summary, section=args.section,
                          index=ensure_index(args.root))
-        print(json.dumps(output, indent=2, ensure_ascii=False))
+            text = render_get(output)
+        print(json.dumps(output, ensure_ascii=False, separators=(",", ":")) if args.json else text)
         return 0
     except (ValueError, OSError, sqlite3.Error) as exc:
         print(f"error: {exc}", file=sys.stderr)
