@@ -40,6 +40,8 @@ class KBTests(unittest.TestCase):
         hits = kb.search(self.root, "token rotation")
         self.assertEqual(hits[0]["id"], "auth")
         self.assertEqual(hits[0]["slug"], "how-it-works")
+        scores = [hit["score"] for hit in kb.search(self.root, "token cache security")]
+        self.assertEqual(scores, sorted(scores))  # bm25: lower is better, best first
         self.assertEqual(kb.search(self.root, "!!!!"), [])
 
     def test_duplicates_and_conflicts(self):

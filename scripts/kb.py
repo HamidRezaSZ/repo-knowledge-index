@@ -172,12 +172,11 @@ def search(root: Path, query: str, limit: int = 5) -> list[dict]:
     if not tokens:
         return []
     expression = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
+    # bm25 weights per column: id, path, heading, slug, title, tags, summary, content.
     sql = ("SELECT id, path, heading, slug, title, summary, "
            "snippet(sections, 7, '', '', ' … ', 18), "
-           "bm25(sections, 0, 0, 4, 0, 6, 5, 4, 1) "
-           "FROM sections WHERE sections MATCH ? ORDER BY rank LIMIT ?")
-    # rank is the default BM25 score for FTS5; use the weighted score explicitly.
-    sql = sql.replace("ORDER BY rank", "ORDER BY bm25(sections, 0, 0, 4, 0, 6, 5, 4, 1)")
+           "bm25(sections, 0, 0, 4, 0, 6, 5, 4, 1) AS score "
+           "FROM sections WHERE sections MATCH ? ORDER BY score LIMIT ?")
     with closing(sqlite3.connect(db_path)) as conn:
         records = conn.execute(sql, (expression, limit)).fetchall()
     return [dict(zip(("id", "path", "heading", "slug", "title", "summary", "snippet", "score"), r))
