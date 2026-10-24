@@ -1,6 +1,6 @@
 # Instructions for coding agents
 
-This repository explores retrieval over project knowledge documents. Read `README.md` for commands, `docs/comparison.md` for research, and the actual source code for implementation.
+This repository explores retrieval over project knowledge documents. The commands below are all you need to answer knowledge questions; read `README.md`, `docs/` or the source only when changing the tool itself.
 
 When answering questions about knowledge topics:
 1. If a stable document ID or alias is known, use `python scripts/kb.py get <id> --summary` first; it lists the document's sections as references.
