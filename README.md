@@ -28,6 +28,10 @@ knowledge/authentication.md  Authentication and Session Lifecycle
 
 `get` accepts that reference, or an id, alias or file path with an optional `#slug`, and prints the citation path on its first line, then the text. `get <id> --summary` prints the document's metadata and its sections as references, and `list` prints every document as one `id  title: summary` line. Add `--json` to any command for compact JSON; search scores there are BM25-based, and higher is better.
 
+## Use in another repository
+
+Copy `scripts/kb.py` into that repository's `scripts/` folder, put documents in `knowledge/`, and paste the "Answering questions from the knowledge base" section of [AGENTS.md](AGENTS.md) into its `AGENTS.md` or `CLAUDE.md`. The CLI treats the folder above `scripts/` as the repository root; `--root` overrides it.
+
 ## Index and catalog
 
 Source knowledge lives in `knowledge/`; the generated index lives in `.knowledge/`, which Git ignores. `list`, `search` and `get` rebuild the index automatically when any knowledge file (or `kb.py` itself) changes, detected by a content hash. `build` does the same on demand and is what CI runs to validate the documents.
