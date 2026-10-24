@@ -7,7 +7,6 @@ The checked-in benchmark compares **a Python linear file scan** with **SQLite FT
 ## Reproduce
 
 ```bash
-python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 python -m benchmarks.compare --docs 300 --repeats 30
 python -m benchmarks.compare --docs 3000 --repeats 30

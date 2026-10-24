@@ -6,10 +6,9 @@ A small, Git-native knowledge-retrieval prototype for AI coding agents. Source k
 
 ## Quick start
 
-Requires Python 3.10+ with SQLite FTS5 enabled.
+Requires Python 3.10+ with SQLite FTS5 enabled (standard in python.org and most Linux builds). There are no third-party dependencies, so agents can run the CLI without installing anything.
 
 ```bash
-python -m pip install -r requirements.txt
 python scripts/kb.py build
 python scripts/kb.py search "refresh token" --limit 5
 python scripts/kb.py get authentication --summary
@@ -35,7 +34,7 @@ related: [authorization]
 Rotate refresh tokens and reject replay.
 ```
 
-Required fields: `id`, `title`, `summary`. Optional: `aliases`, `tags`, `related` (all lists of strings). IDs must be unique lowercase path-safe strings and related IDs must exist. Files and IDs may be relocated independently, provided identifiers remain stable. Files must live inside the repository: a symlinked file that points outside it is rejected, and symlinked directories are not followed. Files named `index.md` or `log.md` are reserved for navigation and change history (as in OKF) and are never indexed; the build fails if one declares an `id`. Markdown is split into ATX-heading sections; SQL BM25 ranks heading, title, tags, summary and section text. This schema is **OKF-inspired, not fully OKF-v0.2-compliant** (OKF requires `type` and uses path-derived concept IDs).
+Required fields: `id`, `title`, `summary`. Optional: `aliases`, `tags`, `related` (all lists of strings). Frontmatter is read as a small YAML subset: one `key: value` per line, where a value is plain or quoted text, a `[a, b]` list, indented `- item` lines, or a `|`/`>` text block, plus `#` comments. Other keys (for example OKF's `type`) are allowed and ignored; anything else in the six fields above fails with its line number. IDs must be unique lowercase path-safe strings and related IDs must exist. Files and IDs may be relocated independently, provided identifiers remain stable. Files must live inside the repository: a symlinked file that points outside it is rejected, and symlinked directories are not followed. Files named `index.md` or `log.md` are reserved for navigation and change history (as in OKF) and are never indexed; the build fails if one declares an `id`. Markdown is split into ATX-heading sections; SQL BM25 ranks heading, title, tags, summary and section text. This schema is **OKF-inspired, not fully OKF-v0.2-compliant** (OKF requires `type` and uses path-derived concept IDs).
 
 ## Retrieval flow
 

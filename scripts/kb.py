@@ -11,9 +11,13 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
-import yaml
-
 FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
+FIELDS = ("id", "title", "summary", "aliases", "tags", "related")
+KEY_LINE = re.compile(r"([^\W\d][\w .-]*?)[ \t]*:(?:[ \t]+(.*))?$")
+QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\']|\'\')*\'')
+FLOW_ITEM = re.compile(r'[ \t]*("(?:[^"\\]|\\.)*"|\'(?:[^\']|\'\')*\'|[^,\]"\'\s][^,\]]*?)?'
+                       r'[ \t]*([,\]])')
+COMMENT_TAIL = re.compile(r"(?:[ \t]+#.*)?")
 # A closing run of #s only counts when a space precedes it, so "# C#" keeps its "#".
 HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
 WORD = re.compile(r"\w+", re.UNICODE)
@@ -21,14 +25,114 @@ SLUG = re.compile(r"[^\w-]+", re.UNICODE)
 RESERVED = ("index.md", "log.md")  # OKF navigation and change-history files; never indexed
 
 
+def plain(text: str) -> str:
+    """A plain YAML scalar without its trailing comment (a # at the start or after a space)."""
+    return re.split(r"(?:^|[ \t])#", text, maxsplit=1)[0].strip()
+
+
+def scalar(text: str, here: str) -> str | None:
+    """A quoted or plain YAML scalar; plain null spellings become None."""
+    if text[:1] not in ("'", '"'):
+        value = plain(text)
+        return None if value in ("", "~", "null", "Null", "NULL") else value
+    match = QUOTED.match(text)
+    if not match or not COMMENT_TAIL.fullmatch(text, match.end()):
+        raise ValueError(f"{here}: unterminated or malformed quoted text")
+    quoted = match.group()
+    if quoted[0] == "'":
+        return quoted[1:-1].replace("''", "'")
+    try:
+        return json.loads(quoted, strict=False)  # JSON escapes are a subset of YAML's
+    except ValueError:
+        raise ValueError(f"{here}: unsupported escape in quoted text") from None
+
+
+def flow_list(text: str, here: str) -> list:
+    """A one-line YAML list such as `[a, "b, c", 'd']`."""
+    items, pos = [], 1
+    while True:
+        match = FLOW_ITEM.match(text, pos)
+        if not match:
+            raise ValueError(f"{here}: a [...] list must close on the same line")
+        pos = match.end()
+        if match.group(1) is not None:
+            items.append(scalar(match.group(1), here))
+        elif match.group(2) == ",":
+            raise ValueError(f"{here}: empty list item")
+        if match.group(2) == "]":
+            break
+    if not COMMENT_TAIL.fullmatch(text, pos):
+        raise ValueError(f"{here}: unexpected text after the list")
+    return items
+
+
+def parse_frontmatter(block: str, where: Path) -> dict:
+    """Read the YAML subset used by knowledge files; keys other than FIELDS are skipped.
+
+    Values are plain or quoted text, `[a, b]` or `- item` lists, or `|`/`>` text blocks.
+    Anything else in a known field fails with its line number instead of being guessed.
+    """
+    data: dict = {}
+    key, mode, lines = None, None, []  # mode: how indented lines below `key` are read
+    for number, line in enumerate(block.split("\n"), 1):
+        here = f"{where}: frontmatter line {number}"
+        indented, stripped = line[:1] in (" ", "\t"), line.strip()
+        if mode in ("|", ">"):
+            if indented or not stripped:
+                lines.append(stripped)
+                continue
+            data[key] = "\n".join(lines).strip() if mode == "|" else " ".join(filter(None, lines))
+            mode = None
+        if not stripped or stripped.startswith("#"):
+            continue
+        if mode == "skip" and (indented or stripped.startswith("-")):
+            continue
+        if mode == "plain" and indented:  # a plain value continued on the next line
+            data[key] = f"{data[key]} {plain(stripped)}"
+            continue
+        if stripped == "-" or stripped.startswith("- "):
+            if mode not in ("list", "empty"):
+                raise ValueError(f"{here}: unexpected list item")
+            data[key], mode = (data[key] or []) + [scalar(stripped[1:].strip(), here)], "list"
+            continue
+        if indented:
+            if mode != "empty":
+                raise ValueError(f"{here}: unexpected indented line")
+            data[key], mode = plain(stripped), "plain"  # `key:` with its value on the next line
+            continue
+        match = KEY_LINE.match(line)
+        if not match:
+            raise ValueError(f"{here}: expected 'key: value'")
+        key, value = match.group(1), (match.group(2) or "").strip()
+        if key not in FIELDS:
+            key, mode = None, "skip"
+            continue
+        if key in data:
+            raise ValueError(f"{here}: duplicate key {key!r}")
+        data[key], mode = None, "empty"
+        if value[:1] == "[":
+            data[key], mode = flow_list(value, here), None
+        elif value[:1] in ("|", ">"):
+            if not re.fullmatch(r"[|>][1-9+-]{0,2}", plain(value)):
+                raise ValueError(f"{here}: unsupported block header {value!r}")
+            mode, lines = value[0], []
+        elif value[:1] in ("{", "&", "*", "!"):
+            raise ValueError(f"{here}: unsupported YAML syntax {value[:1]!r}")
+        elif value[:1] in ("'", '"'):
+            data[key], mode = scalar(value, here), None
+        elif plain(value):
+            data[key], mode = scalar(value, here), "plain"
+    if mode in ("|", ">"):
+        data[key] = "\n".join(lines).strip() if mode == "|" else " ".join(filter(None, lines))
+    return data
+
+
 def parse_document(path: Path) -> tuple[dict, str]:
     raw = path.read_text(encoding="utf-8-sig")  # -sig: tolerate a byte-order mark from Windows editors
     match = FRONTMATTER.match(raw)
     if not match:
         raise ValueError(f"{path}: missing YAML frontmatter")
-    metadata = yaml.safe_load(match.group(1))
-    if not isinstance(metadata, dict):
-        raise ValueError(f"{path}: YAML must be a mapping")
+    metadata = parse_frontmatter(match.group(1), path)
     for field in ("id", "title", "summary"):
         if not isinstance(metadata.get(field), str) or not metadata[field].strip():
             raise ValueError(f"{path}: missing/invalid {field}")
@@ -228,7 +332,7 @@ def main() -> int:
             output = get(args.root, args.id, summary=args.summary, section=args.section)
         print(json.dumps(output, indent=2, ensure_ascii=False))
         return 0
-    except (ValueError, OSError, sqlite3.Error, yaml.YAMLError) as exc:
+    except (ValueError, OSError, sqlite3.Error) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

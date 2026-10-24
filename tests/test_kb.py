@@ -85,6 +85,26 @@ class KBTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "run 'build'"):
             kb.search(self.root, "token")
 
+    def test_frontmatter_yaml_subset(self):
+        def parse(block):
+            return kb.parse_frontmatter(block, Path("x.md"))
+
+        block = ("id: a\ntitle: 'It''s: quoted'  # note\nsummary: Use C# here # comment\n"
+                 "aliases: [auth, \"x, y\"]\ntags:\n  - one\n- two\nrelated:\n"
+                 "type: concept\nowner:\n  team: platform\n")
+        self.assertEqual(parse(block), {"id": "a", "title": "It's: quoted",
+                                        "summary": "Use C# here", "aliases": ["auth", "x, y"],
+                                        "tags": ["one", "two"], "related": None})
+        folded = parse("summary: >\n  Folded\n  text\ntitle: Long\n  plain title\n")
+        self.assertEqual(folded, {"summary": "Folded text", "title": "Long plain title"})
+        for block, message in [("id: a\nid: b", "line 2: duplicate key"),
+                               ("tags: [a,\n  b]", r"line 1: a \[...\] list must close"),
+                               ('title: "open', "line 1: unterminated"),
+                               ("title: {x: 1}", "line 1: unsupported YAML syntax"),
+                               ("title T", "line 1: expected 'key: value'")]:
+            with self.assertRaisesRegex(ValueError, message):
+                parse(block)
+
     def test_empty_or_missing_list_fields(self):
         self.put("a.md", "---\nid: a\ntitle: A\nsummary: S\naliases:\ntags:\n---\n# A\nText.\n")
         kb.build(self.root)
