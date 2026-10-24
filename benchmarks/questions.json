@@ -1,0 +1,10 @@
+[
+  {"query": "how do refresh tokens rotate", "expect": "authentication#refresh-tokens"},
+  {"query": "short-lived access token after login", "expect": "authentication#login"},
+  {"query": "revoke a session", "expect": "authentication#revoking-sessions"},
+  {"query": "check ownership before accessing an object", "expect": "authorization#object-level-permissions"},
+  {"query": "missing authorization policy", "expect": "authorization#default-deny"},
+  {"query": "read from cache then fall back to the database", "expect": "caching#cache-aside"},
+  {"query": "invalidate cache keys after writes", "expect": "caching#invalidation"},
+  {"query": "stale values after a database write", "expect": "caching#invalidation"}
+]

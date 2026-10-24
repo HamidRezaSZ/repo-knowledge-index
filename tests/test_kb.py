@@ -1,5 +1,6 @@
 import io
 import json
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -72,6 +73,16 @@ class KBTests(unittest.TestCase):
         self.put("b.md", sample("b", title="Caching", body=body))
         kb.build(self.root)
         self.assertEqual([hit["id"] for hit in kb.search(self.root, "cache")], ["b", "a"])
+
+    def test_benchmark_questions_rank_expected_section_first(self):
+        repo = Path(__file__).resolve().parents[1]
+        shutil.copytree(repo / "knowledge", self.root / "knowledge", dirs_exist_ok=True)
+        kb.build(self.root)
+        questions = json.loads((repo / "benchmarks" / "questions.json").read_text(encoding="utf-8"))
+        for question in questions:
+            sections = [hit for hit in kb.search(self.root, question["query"]) if "slug" in hit]
+            self.assertEqual(f"{sections[0]['id']}#{sections[0]['slug']}", question["expect"],
+                             question["query"])
 
     def test_search_matches_other_word_forms(self):
         body = ("# Refresh\nRotate refresh credentials. Revoked sessions are refused. "

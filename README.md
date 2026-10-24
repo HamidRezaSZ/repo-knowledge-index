@@ -2,7 +2,7 @@
 
 A small, Git-native knowledge-retrieval prototype for AI coding agents. Source knowledge remains readable Markdown with YAML frontmatter; generated artifacts are a JSON ID/alias index and a local SQLite FTS5 section index. The CLI prints compact plain text (or compact JSON with `--json`) so agents can fetch selected sections rather than putting an entire repository into context.
 
-**Status:** Functional lexical retrieval prototype and reproducible synthetic benchmark. Not a semantic/vector search engine or a validated winner across all projects. Read [the comparative research](docs/comparison.md) and [evaluation limitations](docs/evaluation.md).
+**Status:** Functional lexical retrieval prototype with reproducible token-usage and latency benchmarks. Not a semantic/vector search engine or a validated winner across all projects. Read [the comparative research](docs/comparison.md) and [evaluation limitations](docs/evaluation.md).
 
 ## Quick start
 
@@ -15,6 +15,7 @@ python scripts/kb.py search "refresh token" --limit 5
 python scripts/kb.py get authentication --summary
 python scripts/kb.py get auth#refresh-tokens
 python -m unittest discover -s tests -v
+python -m benchmarks.tokens
 python -m benchmarks.compare --docs 300 --repeats 20
 ```
 
@@ -61,6 +62,7 @@ FTS5 query costs depend on posting-list sizes and ranking; the `O(1)` claim appl
 - `scripts/kb.py`: builder and `build`, `list`, `search`, `get` CLI
 - `knowledge/`: sample corpus
 - `tests/`: correctness and validation tests
+- `benchmarks/tokens.py` and `benchmarks/questions.json`: tokens an agent receives versus reading whole files, on labeled questions
 - `benchmarks/compare.py`: repeatable warm in-process lexical baseline
 - `docs/comparison.md`: comparative methods research and references
 - `docs/evaluation.md`: benchmarking protocol, results and limitations
@@ -68,7 +70,7 @@ FTS5 query costs depend on posting-list sizes and ranking; the `O(1)` claim appl
 
 ## Limitations
 
-The index rebuilds in full and uses SQLite's Porter stemmer over Unicode tokens, so English word forms match ("revoke" finds "revoked") while other languages match whole words only. It doesn't implement semantic recall, incremental reindexing, graph queries or an MCP server. Markdown parsing handles ATX headings and fenced code blocks, not every CommonMark edge case. No LLM tokenizer or end-to-end agent test is included. See the docs for tradeoffs.
+The index rebuilds in full and uses SQLite's Porter stemmer over Unicode tokens, so English word forms match ("revoke" finds "revoked") while other languages match whole words only. It doesn't implement semantic recall, incremental reindexing, graph queries or an MCP server. Markdown parsing handles ATX headings and fenced code blocks, not every CommonMark edge case. Token counts use OpenAI's `o200k_base` encoding as a proxy for Claude's tokenizer, and no end-to-end agent test is included. See the docs for tradeoffs.
 
 ## License
 
