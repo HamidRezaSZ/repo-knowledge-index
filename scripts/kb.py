@@ -14,7 +14,8 @@ from pathlib import Path
 import yaml
 
 FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
-HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)\s*#*\s*$")
+# A closing run of #s only counts when a space precedes it, so "# C#" keeps its "#".
+HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
 WORD = re.compile(r"\w+", re.UNICODE)
 SLUG = re.compile(r"[^\w-]+", re.UNICODE)
 

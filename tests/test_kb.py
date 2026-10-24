@@ -64,6 +64,11 @@ class KBTests(unittest.TestCase):
         self.assertEqual([row[0] for row in result], ["Usage", "Real"])
         self.assertIn("# Fake heading", result[0][2])
 
+    def test_heading_text_keeps_trailing_hash(self):
+        body = "# C#\na\n# F# tips\nb\n# Use C#  \nc\n# Closed ##\nd\n## Spaced  ###  \ne\n#hashtag\nf\n"
+        self.assertEqual([row[0] for row in kb.sections(body)],
+                         ["C#", "F# tips", "Use C#", "Closed", "Spaced"])
+
     def test_rebuild_discards_deleted_document(self):
         self.put("a.md", sample("old"))
         kb.build(self.root)
