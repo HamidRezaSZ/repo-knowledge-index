@@ -232,7 +232,7 @@ def build(root: Path) -> dict:
     root = root.resolve()
     files = source_files(root)
     stamp = fingerprint(root, files)  # before parsing: an edit made mid-build is caught next time
-    docs, aliases, rows = {}, {}, []
+    docs, aliases, doc_rows, rows = {}, {}, [], []
     for path in files:
         rel = path.relative_to(root).as_posix()
         if path.name in RESERVED:
@@ -252,10 +252,11 @@ def build(root: Path) -> dict:
             if not alias or alias in aliases:
                 raise ValueError(f"Empty or duplicate alias: {alias!r}")
             aliases[alias] = key
+        doc_rows.append((key, rel, meta["title"], " ".join(meta["tags"] + meta["aliases"]),
+                         meta["summary"]))
         for section in sections(body):
-            rows.append((key, rel, section.heading_path, section.slug, meta["title"],
-                         " ".join(meta["tags"] + meta["aliases"]),
-                         meta["summary"], section.content))
+            rows.append((key, rel, meta["title"], section.heading_path, section.slug,
+                         section.content))
     for key, entry in docs.items():
         if key in aliases and aliases[key] != key:
             raise ValueError(f"ID conflicts with alias: {key}")
@@ -270,10 +271,15 @@ def build(root: Path) -> dict:
     try:
         tmp_db.unlink(missing_ok=True)
         with closing(sqlite3.connect(tmp_db)) as conn:
-            conn.execute("CREATE VIRTUAL TABLE sections USING fts5("
-                         "id UNINDEXED, path UNINDEXED, heading, slug UNINDEXED, "
-                         "title, tags, summary, content, tokenize='porter unicode61')")
-            conn.executemany("INSERT INTO sections VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+            # Document fields are indexed once in `docs`, not copied onto every section, so a
+            # matching summary cannot turn all of a document's sections into hits.
+            conn.execute("CREATE VIRTUAL TABLE docs USING fts5(id UNINDEXED, path UNINDEXED, "
+                         "title, keywords, summary, tokenize='porter unicode61')")
+            conn.execute("CREATE VIRTUAL TABLE sections USING fts5(id UNINDEXED, path UNINDEXED, "
+                         "title UNINDEXED, heading, slug UNINDEXED, content, "
+                         "tokenize='porter unicode61')")
+            conn.executemany("INSERT INTO docs VALUES (?, ?, ?, ?, ?)", doc_rows)
+            conn.executemany("INSERT INTO sections VALUES (?, ?, ?, ?, ?, ?)", rows)
             conn.commit()
         tmp_json.write_text(json.dumps(index, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
                             encoding="utf-8")
@@ -370,7 +376,12 @@ def find_section(found: list[Section], wanted: str) -> Section:
 
 
 def search(root: Path, query: str, limit: int = 5) -> list[dict]:
-    """The best-matching sections, best first. A higher score is a better match."""
+    """The best matches, best first. A higher score is a better match.
+
+    A section is returned only when its own heading path or text matches. A match on its
+    document's title, tags or summary raises its score; a document that matches only
+    there is returned once, with its summary instead of a section.
+    """
     _, db_path = locations(root)
     if not db_path.is_file():
         raise ValueError("Search database missing; run 'build' first")
@@ -378,16 +389,34 @@ def search(root: Path, query: str, limit: int = 5) -> list[dict]:
     if not tokens:
         return []
     expression = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
-    # bm25 weights per column: id, path, heading, slug, title, tags, summary, content.
-    sql = ("SELECT id, path, title, heading, slug, "
-           "snippet(sections, 7, '', '', '...', 18), "
-           "bm25(sections, 0, 0, 4, 0, 6, 5, 4, 1) AS score "
-           "FROM sections WHERE sections MATCH ? ORDER BY score LIMIT ?")
+    # bm25() weights follow each table's column order; a lower bm25 is a better match.
     with closing(sqlite3.connect(db_path)) as conn:
-        records = conn.execute(sql, (expression, limit)).fetchall()
-    return [{"id": doc, "path": path, "title": title, "heading": heading, "slug": slug,
-             "snippet": one_line(snippet), "score": round(-score, 3)}  # bm25: lower is better
-            for doc, path, title, heading, slug, snippet, score in records]
+        matched_docs = {row[0]: row for row in conn.execute(
+            "SELECT id, path, title, summary, bm25(docs, 0, 0, 6, 5, 4) FROM docs "
+            "WHERE docs MATCH ?", (expression,))}
+
+        def doc_score(doc: str) -> float:
+            return matched_docs[doc][4] if doc in matched_docs else 0.0
+
+        conn.create_function("doc_score", 1, doc_score, deterministic=True)
+        boost = " + doc_score(id)" if matched_docs else ""  # skip the per-row call if unused
+        rows = conn.execute(
+            "SELECT id, path, title, heading, slug, snippet(sections, 5, '', '', '...', 18), "
+            f"bm25(sections, 0, 0, 0, 4, 0, 1){boost} AS score FROM sections "
+            "WHERE sections MATCH ? ORDER BY score LIMIT ?", (expression, limit)).fetchall()
+        doc_only = set(matched_docs) - {row[0] for row in rows}
+        if len(rows) == limit:  # a document hit that cannot beat the last section hit is cut
+            doc_only = {doc for doc in doc_only if matched_docs[doc][4] < rows[-1][6]}
+        if doc_only:  # drop documents that do have matching sections, just not in the top hits
+            doc_only -= {doc for (doc,) in conn.execute(
+                "SELECT DISTINCT id FROM sections WHERE sections MATCH ?", (expression,))}
+    hits = [{"id": doc, "path": path, "title": title, "heading": heading, "slug": slug,
+             "snippet": one_line(snippet), "score": score}
+            for doc, path, title, heading, slug, snippet, score in rows]
+    hits += [{"id": doc, "path": path, "title": title, "summary": summary, "score": score}
+             for doc, path, title, summary, score in matched_docs.values() if doc in doc_only]
+    hits.sort(key=lambda hit: hit["score"])
+    return [{**hit, "score": round(-hit["score"], 3)} for hit in hits[:limit]]
 
 
 def one_line(text: str) -> str:
@@ -400,18 +429,27 @@ def group_hits(hits: list[dict]) -> list[dict]:
     for hit in hits:
         group = groups.setdefault(hit["id"], {"id": hit["id"], "path": hit["path"],
                                               "title": hit["title"], "sections": []})
-        group["sections"].append({"ref": f"{hit['id']}#{hit['slug']}", "heading": hit["heading"],
-                                  "snippet": hit["snippet"], "score": hit["score"]})
+        if "slug" in hit:
+            group["sections"].append({"ref": f"{hit['id']}#{hit['slug']}",
+                                      "heading": hit["heading"], "snippet": hit["snippet"],
+                                      "score": hit["score"]})
+        else:  # matched on the document's title, tags or summary only
+            group.update(summary=hit["summary"], score=hit["score"])
     return list(groups.values())
 
 
 def render_search(groups: list[dict]) -> str:
-    """A header line per document, then one `ref  heading: snippet` line per section."""
+    """A header line per document, then one `ref  heading: snippet` line per section.
+
+    A document that matched only on its title, tags or summary gets an `id  summary` line.
+    """
     if not groups:
         return "no matches"
     lines = []
     for group in groups:
         lines.append(f"{group['path']}  {one_line(group['title'])}")
+        if "summary" in group:
+            lines.append(f"  {group['id']}  {one_line(group['summary'])}")
         lines += [f"  {s['ref']}  {s['heading']}: {s['snippet']}" for s in group["sections"]]
     return "\n".join(lines)
 

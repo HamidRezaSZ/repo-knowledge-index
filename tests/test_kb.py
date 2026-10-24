@@ -52,6 +52,27 @@ class KBTests(unittest.TestCase):
         self.assertEqual(scores, sorted(scores, reverse=True))  # higher is better, best first
         self.assertEqual(kb.search(self.root, "!!!!"), [])
 
+    def test_search_returns_only_matching_sections(self):
+        self.put("auth.md", "---\nid: auth\ntitle: Authentication\nsummary: Login and refresh "
+                            "tokens.\naliases: [jwt]\n---\n# Refresh tokens\nRotate them.\n"
+                            "# Revoking sessions\nRefuse revoked ids.\n")
+        kb.build(self.root)
+        # The summary mentions refresh tokens, but only one section does.
+        self.assertEqual([hit.get("slug") for hit in kb.search(self.root, "refresh token")],
+                         ["refresh-tokens"])
+        hits = kb.search(self.root, "jwt")  # only the alias matches: one document-level hit
+        self.assertEqual([(hit["id"], hit.get("slug"), hit["summary"]) for hit in hits],
+                         [("auth", None, "Login and refresh tokens.")])
+        self.assertEqual(self.cli("search", "jwt")[1],
+                         "knowledge/auth.md  Authentication\n  auth  Login and refresh tokens.\n")
+
+    def test_document_fields_raise_section_rank(self):
+        body = "# Notes\nA cache appears in this otherwise ordinary sentence.\n"
+        self.put("a.md", sample("a", title="Notes", body=body))
+        self.put("b.md", sample("b", title="Caching", body=body))
+        kb.build(self.root)
+        self.assertEqual([hit["id"] for hit in kb.search(self.root, "cache")], ["b", "a"])
+
     def test_search_matches_other_word_forms(self):
         body = ("# Refresh\nRotate refresh credentials. Revoked sessions are refused. "
                 "Invalidate keys.\n")
