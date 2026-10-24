@@ -17,7 +17,7 @@ python -m unittest discover -s tests -v
 python -m benchmarks.compare --docs 300 --repeats 20
 ```
 
-The source knowledge directory is `knowledge/`. The generated local artifacts live in `.knowledge/` and are ignored by Git. Rebuild after editing, adding, or deleting knowledge documents.
+The source knowledge directory is `knowledge/`. The generated local artifacts live in `.knowledge/` and are ignored by Git. `search` and `get` rebuild them automatically when any knowledge file (or `kb.py` itself) changes, detected by a content hash. `build` does the same on demand and is what CI runs to validate the documents.
 
 ## Knowledge format
 

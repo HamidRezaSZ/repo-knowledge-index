@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -201,10 +202,22 @@ def source_files(root: Path) -> list[Path]:
     return sorted(found)
 
 
+def fingerprint(root: Path, files: list[Path]) -> str:
+    """Hash of this tool and every indexed file, so any edit, move or upgrade is noticed."""
+    digest = hashlib.sha256(Path(__file__).read_bytes())
+    for path in files:
+        if path.name not in RESERVED:
+            data = path.read_bytes()
+            digest.update(f"\0{path.relative_to(root).as_posix()}\0{len(data)}\0".encode() + data)
+    return digest.hexdigest()
+
+
 def build(root: Path) -> dict:
     root = root.resolve()
+    files = source_files(root)
+    stamp = fingerprint(root, files)  # before parsing: an edit made mid-build is caught next time
     docs, aliases, rows = {}, {}, []
-    for path in source_files(root):
+    for path in files:
         rel = path.relative_to(root).as_posix()
         if path.name in RESERVED:
             match = FRONTMATTER.match(path.read_text(encoding="utf-8-sig"))
@@ -233,11 +246,11 @@ def build(root: Path) -> dict:
         for related in entry["related"]:
             if related not in docs:
                 raise ValueError(f"Unknown related id {related!r} in {key}")
-    index = {"by_id": docs, "by_alias": aliases}
+    index = {"by_id": docs, "by_alias": aliases, "fingerprint": stamp}
     index_path, db_path = locations(root)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_db = db_path.with_suffix(".tmp.db")
-    tmp_json = index_path.with_suffix(".tmp.json")
+    tmp_db = db_path.with_suffix(f".{os.getpid()}.tmp")  # per process: rebuilds may overlap
+    tmp_json = index_path.with_suffix(f".{os.getpid()}.tmp")
     try:
         tmp_db.unlink(missing_ok=True)
         with closing(sqlite3.connect(tmp_db)) as conn:
@@ -263,8 +276,24 @@ def load_index(root: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def get(root: Path, identifier: str, *, summary: bool = False, section: str | None = None) -> dict:
-    index = load_index(root)
+def ensure_index(root: Path) -> dict:
+    """Load the index, rebuilding it first if a knowledge file or this tool changed."""
+    root = root.resolve()
+    index_path, db_path = locations(root)
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # missing or unreadable: rebuild
+        index = {}
+    if not db_path.is_file() or index.get("fingerprint") != fingerprint(root, source_files(root)):
+        build(root)
+        index = load_index(root)
+    return index
+
+
+def get(root: Path, identifier: str, *, summary: bool = False, section: str | None = None,
+        index: dict | None = None) -> dict:
+    if index is None:
+        index = load_index(root)
     key = identifier.casefold()
     key = index["by_alias"].get(key, key)
     entry = index["by_id"].get(key)
@@ -276,6 +305,8 @@ def get(root: Path, identifier: str, *, summary: bool = False, section: str | No
     path = (root.resolve() / entry["path"]).resolve()
     if not path.is_relative_to(root.resolve()):
         raise ValueError("Unsafe indexed path")
+    if not path.is_file():
+        raise ValueError(f"{entry['path']} no longer exists; the index is stale (run 'build')")
     _, body = parse_document(path)
     if section is not None:
         found = next((content for heading, slug, content in sections(body)
@@ -306,7 +337,7 @@ def search(root: Path, query: str, limit: int = 5) -> list[dict]:
             for r in records]
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -318,18 +349,20 @@ def main() -> int:
     g.add_argument("id")
     g.add_argument("--summary", action="store_true")
     g.add_argument("--section")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         if args.command == "build":
             output = build(args.root)
         elif args.command == "search":
             if not 1 <= args.limit <= 100:
                 raise ValueError("--limit must be between 1 and 100")
+            ensure_index(args.root)
             output = search(args.root, args.query, args.limit)
         else:
             if args.summary and args.section:
                 raise ValueError("--summary and --section are mutually exclusive")
-            output = get(args.root, args.id, summary=args.summary, section=args.section)
+            output = get(args.root, args.id, summary=args.summary, section=args.section,
+                         index=ensure_index(args.root))
         print(json.dumps(output, indent=2, ensure_ascii=False))
         return 0
     except (ValueError, OSError, sqlite3.Error) as exc:

@@ -1,7 +1,9 @@
+import io
 import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -24,6 +26,12 @@ class KBTests(unittest.TestCase):
         target = self.root / "knowledge" / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
+
+    def cli(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = kb.main(["--root", str(self.root), *args])
+        return code, out.getvalue(), err.getvalue()
 
     def test_build_and_get_alias(self):
         self.put("auth.md", sample("auth", aliases="[login, jwt]"))
@@ -140,6 +148,30 @@ class KBTests(unittest.TestCase):
         (self.root / "knowledge" / "bom.md").write_bytes(b"\xef\xbb\xbf" + sample("bom").encode())
         self.assertEqual(kb.build(self.root), {"documents": 1, "sections": 1})
         self.assertEqual(kb.get(self.root, "bom")["content"], "# How it works\nToken rotation protects accounts.\n")
+
+    def test_index_follows_source_changes(self):
+        self.put("a.md", sample("alpha", body="# Intro\nalpha beta.\n"))
+        kb.build(self.root)
+        self.put("a.md", sample("alpha", body="# Intro\nzebra beta.\n"))  # same size, new content
+        kb.ensure_index(self.root)
+        self.assertEqual(kb.search(self.root, "zebra")[0]["id"], "alpha")
+        (self.root / "knowledge" / "a.md").rename(self.root / "knowledge" / "b.md")
+        index = kb.ensure_index(self.root)
+        self.assertEqual(kb.get(self.root, "alpha", index=index)["path"], "knowledge/b.md")
+        with mock.patch.object(kb, "build", wraps=kb.build) as spy:
+            kb.ensure_index(self.root)
+        spy.assert_not_called()  # nothing changed, nothing rebuilt
+        (self.root / "knowledge" / "b.md").unlink()
+        with self.assertRaisesRegex(ValueError, "no longer exists; the index is stale"):
+            kb.get(self.root, "alpha")  # library calls do not rebuild by themselves
+
+    def test_cli_rebuilds_stale_or_missing_index(self):
+        self.put("a.md", sample("alpha"))
+        code, out, _ = self.cli("search", "token")  # no build has run yet
+        self.assertEqual((code, json.loads(out)[0]["id"]), (0, "alpha"))
+        self.put("a.md", sample("alpha", title="Renamed"))
+        code, out, _ = self.cli("get", "alpha", "--summary")
+        self.assertEqual((code, json.loads(out)["title"]), (0, "Renamed"))
 
     def test_database_connections_are_closed(self):
         opened = []
