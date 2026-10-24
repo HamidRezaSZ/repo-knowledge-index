@@ -32,7 +32,9 @@ def parse_document(path: Path) -> tuple[dict, str]:
         if not isinstance(metadata.get(field), str) or not metadata[field].strip():
             raise ValueError(f"{path}: missing/invalid {field}")
     for field in ("aliases", "tags", "related"):
-        val = metadata.get(field, [])
+        val = metadata.get(field)
+        if val is None:  # absent, or an empty `field:` line
+            val = metadata[field] = []
         if not isinstance(val, list) or not all(isinstance(v, str) for v in val):
             raise ValueError(f"{path}: {field} must be a list of strings")
     if not re.fullmatch(r"[a-z0-9][a-z0-9._/-]*", metadata["id"]):
@@ -95,15 +97,15 @@ def build(root: Path) -> dict:
             raise ValueError(f"Duplicate id: {key}")
         rel = path.relative_to(root).as_posix()
         docs[key] = {"path": rel, "title": meta["title"], "summary": meta["summary"],
-                     "tags": meta.get("tags", []), "related": meta.get("related", [])}
-        for alias in meta.get("aliases", []):
+                     "tags": meta["tags"], "related": meta["related"]}
+        for alias in meta["aliases"]:
             alias = alias.strip().casefold()
             if not alias or alias in aliases:
                 raise ValueError(f"Empty or duplicate alias: {alias!r}")
             aliases[alias] = key
         for label, slug, content in sections(body):
             rows.append((key, rel, label, slug, meta["title"],
-                         " ".join(meta.get("tags", []) + meta.get("aliases", [])),
+                         " ".join(meta["tags"] + meta["aliases"]),
                          meta["summary"], content))
     for key, entry in docs.items():
         if key in aliases and aliases[key] != key:

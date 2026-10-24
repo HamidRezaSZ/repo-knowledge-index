@@ -85,6 +85,15 @@ class KBTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "run 'build'"):
             kb.search(self.root, "token")
 
+    def test_empty_or_missing_list_fields(self):
+        self.put("a.md", "---\nid: a\ntitle: A\nsummary: S\naliases:\ntags:\n---\n# A\nText.\n")
+        kb.build(self.root)
+        self.assertEqual(kb.get(self.root, "a", summary=True)["tags"], [])
+        self.assertEqual(kb.get(self.root, "a", summary=True)["related"], [])
+        self.put("b.md", "---\nid: b\ntitle: B\nsummary: S\ntags: oops\n---\n# B\nText.\n")
+        with self.assertRaisesRegex(ValueError, "tags must be a list"):
+            kb.build(self.root)
+
     def test_file_with_byte_order_mark(self):
         (self.root / "knowledge" / "bom.md").write_bytes(b"\xef\xbb\xbf" + sample("bom").encode())
         self.assertEqual(kb.build(self.root), {"documents": 1, "sections": 1})
