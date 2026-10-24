@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import yaml
@@ -116,7 +117,7 @@ def build(root: Path) -> dict:
     tmp_json = index_path.with_suffix(".tmp.json")
     try:
         tmp_db.unlink(missing_ok=True)
-        with sqlite3.connect(tmp_db) as conn:
+        with closing(sqlite3.connect(tmp_db)) as conn:
             conn.execute("CREATE VIRTUAL TABLE sections USING fts5("
                          "id UNINDEXED, path UNINDEXED, heading, slug UNINDEXED, "
                          "title, tags, summary, content, tokenize='unicode61')")
@@ -177,7 +178,7 @@ def search(root: Path, query: str, limit: int = 5) -> list[dict]:
            "FROM sections WHERE sections MATCH ? ORDER BY rank LIMIT ?")
     # rank is the default BM25 score for FTS5; use the weighted score explicitly.
     sql = sql.replace("ORDER BY rank", "ORDER BY bm25(sections, 0, 0, 4, 0, 6, 5, 4, 1)")
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         records = conn.execute(sql, (expression, limit)).fetchall()
     return [dict(zip(("id", "path", "heading", "slug", "title", "summary", "snippet", "score"), r))
             for r in records]

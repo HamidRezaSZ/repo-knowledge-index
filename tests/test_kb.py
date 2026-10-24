@@ -1,7 +1,9 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts import kb
 
@@ -75,6 +77,23 @@ class KBTests(unittest.TestCase):
             kb.build(self.root)
         with self.assertRaisesRegex(ValueError, "run 'build'"):
             kb.search(self.root, "token")
+
+    def test_database_connections_are_closed(self):
+        opened = []
+        real_connect = sqlite3.connect
+
+        def tracking_connect(*args, **kwargs):
+            opened.append(real_connect(*args, **kwargs))
+            return opened[-1]
+
+        self.put("a.md", sample("auth"))
+        with mock.patch.object(sqlite3, "connect", tracking_connect):
+            kb.build(self.root)
+            kb.search(self.root, "token")
+        self.assertEqual(len(opened), 2)
+        for conn in opened:
+            with self.assertRaises(sqlite3.ProgrammingError):  # raised only by closed connections
+                conn.execute("SELECT 1")
 
 
 if __name__ == "__main__":
