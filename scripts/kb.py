@@ -82,13 +82,24 @@ def locations(root: Path) -> tuple[Path, Path]:
     return root / ".knowledge" / "index.json", root / ".knowledge" / "search.db"
 
 
-def build(root: Path) -> dict:
-    root = root.resolve()
+def source_files(root: Path) -> list[Path]:
+    """Markdown files under knowledge/. Directory symlinks are not followed."""
     folder = root / "knowledge"
     if not folder.is_dir():
         raise ValueError(f"Missing knowledge directory: {folder}")
+    found = [Path(directory, name) for directory, _, names in os.walk(folder)
+             for name in names if name.endswith(".md")]
+    for path in found:
+        if not path.resolve().is_relative_to(root):
+            rel = path.relative_to(root).as_posix()
+            raise ValueError(f"{rel}: resolves outside the repository")
+    return sorted(found)
+
+
+def build(root: Path) -> dict:
+    root = root.resolve()
     docs, aliases, rows = {}, {}, []
-    for path in sorted(folder.rglob("*.md")):
+    for path in source_files(root):
         if path.name in ("index.md", "log.md"):
             continue
         meta, body = parse_document(path)

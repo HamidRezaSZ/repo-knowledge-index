@@ -94,6 +94,19 @@ class KBTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tags must be a list"):
             kb.build(self.root)
 
+    def test_files_outside_repository_are_not_indexed(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        (Path(outside.name) / "secret.md").write_text(sample("ext"), encoding="utf-8")
+        try:
+            (self.root / "knowledge" / "shared").symlink_to(outside.name, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are not available")
+        self.assertEqual(kb.build(self.root)["documents"], 0)  # directory links are not followed
+        (self.root / "knowledge" / "ext.md").symlink_to(Path(outside.name) / "secret.md")
+        with self.assertRaisesRegex(ValueError, "ext.md: resolves outside the repository"):
+            kb.build(self.root)
+
     def test_file_with_byte_order_mark(self):
         (self.root / "knowledge" / "bom.md").write_bytes(b"\xef\xbb\xbf" + sample("bom").encode())
         self.assertEqual(kb.build(self.root), {"documents": 1, "sections": 1})
