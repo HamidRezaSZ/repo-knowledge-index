@@ -21,7 +21,7 @@ SLUG = re.compile(r"[^\w-]+", re.UNICODE)
 
 
 def parse_document(path: Path) -> tuple[dict, str]:
-    raw = path.read_text(encoding="utf-8")
+    raw = path.read_text(encoding="utf-8-sig")  # -sig: tolerate a byte-order mark from Windows editors
     match = FRONTMATTER.match(raw)
     if not match:
         raise ValueError(f"{path}: missing YAML frontmatter")

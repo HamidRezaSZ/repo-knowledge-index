@@ -85,6 +85,11 @@ class KBTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "run 'build'"):
             kb.search(self.root, "token")
 
+    def test_file_with_byte_order_mark(self):
+        (self.root / "knowledge" / "bom.md").write_bytes(b"\xef\xbb\xbf" + sample("bom").encode())
+        self.assertEqual(kb.build(self.root), {"documents": 1, "sections": 1})
+        self.assertEqual(kb.get(self.root, "bom")["content"], "# How it works\nToken rotation protects accounts.\n")
+
     def test_database_connections_are_closed(self):
         opened = []
         real_connect = sqlite3.connect
