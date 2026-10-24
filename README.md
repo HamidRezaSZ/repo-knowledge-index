@@ -27,7 +27,7 @@ knowledge/authentication.md  Authentication and Session Lifecycle
 
 `get` accepts that reference, or an id, alias or file path with an optional `#slug`, and prints the citation path on its first line, then the text. `get <id> --summary` prints the document's metadata and its sections as references, and `list` prints every document as one `id  title: summary` line. Add `--json` to any command for compact JSON; search scores there are BM25-based, and higher is better.
 
-The source knowledge directory is `knowledge/`. The generated local artifacts live in `.knowledge/` and are ignored by Git. `search` and `get` rebuild them automatically when any knowledge file (or `kb.py` itself) changes, detected by a content hash. `build` does the same on demand and is what CI runs to validate the documents.
+The source knowledge directory is `knowledge/`. The generated local artifacts live in `.knowledge/` and are ignored by Git. `search` and `get` rebuild them automatically when any knowledge file (or `kb.py` itself) changes, detected by a content hash. `build` does the same on demand and is what CI runs to validate the documents. `build` also writes [`knowledge/index.md`](knowledge/index.md), a catalog for people browsing the repository with one linked line per document; commit it with your document changes, since CI fails when it is out of date. A hand-written `knowledge/index.md` (one without the generated first line) is never overwritten.
 
 ## Knowledge format
 
