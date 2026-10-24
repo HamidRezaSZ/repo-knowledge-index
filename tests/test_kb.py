@@ -253,11 +253,26 @@ class KBTests(unittest.TestCase):
                          "Unrelated.")
         self.assertEqual(self.cli("get", "auth", "--summary")[1],
                          "auth  Auth\npath: knowledge/auth.md\nsummary: About auth.\n"
-                         "tags: security\n")
+                         "tags: security\nsections:\n  auth#refresh-tokens  Refresh tokens\n"
+                         "  auth#other  Other\n")
         self.assertEqual(self.cli("search", "zebra")[1], "no matches\n")
         self.assertEqual(self.cli("get", "auth#other", "--section", "other"),
                          (1, "", "error: give the section either as <id>#<slug> or with "
                                  "--section, not both\n"))
+
+    def test_list_and_outline(self):
+        self.put("b.md", sample("beta", title="Beta"))
+        self.put("a.md", sample("alpha", title="Alpha", body="# One\nx\n## Two\ny\n"))
+        self.assertEqual(self.cli("list"), (0, "alpha  Alpha: About alpha.\n"
+                                               "beta  Beta: About beta.\n", ""))
+        self.assertEqual(json.loads(self.cli("list", "--json")[1])[0],
+                         {"id": "alpha", "path": "knowledge/a.md", "title": "Alpha",
+                          "summary": "About alpha."})
+        self.assertEqual(kb.get(self.root, "alpha", summary=True)["sections"],
+                         [["one", "One"], ["two", "One > Two"]])
+        (self.root / "knowledge" / "a.md").unlink()
+        (self.root / "knowledge" / "b.md").unlink()
+        self.assertEqual(self.cli("list")[1], "no documents\n")
 
     def test_cli_json_output_is_compact(self):
         self.put("auth.md", sample("auth"))

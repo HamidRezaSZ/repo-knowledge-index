@@ -10,6 +10,7 @@ Requires Python 3.10+ with SQLite FTS5 enabled (standard in python.org and most 
 
 ```bash
 python scripts/kb.py build
+python scripts/kb.py list
 python scripts/kb.py search "refresh token" --limit 5
 python scripts/kb.py get authentication --summary
 python scripts/kb.py get auth#refresh-tokens
@@ -24,7 +25,7 @@ knowledge/authentication.md  Authentication and Session Lifecycle
   authentication#refresh-tokens  Refresh tokens: Refresh tokens allow a client to obtain another access token. Rotate refresh credentials and reject replay of an...
 ```
 
-`get` accepts that reference, or an id, alias or file path with an optional `#slug`, and prints the citation path on its first line, then the text. Add `--json` to any command for compact JSON; search scores there are BM25-based, and higher is better.
+`get` accepts that reference, or an id, alias or file path with an optional `#slug`, and prints the citation path on its first line, then the text. `get <id> --summary` prints the document's metadata and its sections as references, and `list` prints every document as one `id  title: summary` line. Add `--json` to any command for compact JSON; search scores there are BM25-based, and higher is better.
 
 The source knowledge directory is `knowledge/`. The generated local artifacts live in `.knowledge/` and are ignored by Git. `search` and `get` rebuild them automatically when any knowledge file (or `kb.py` itself) changes, detected by a content hash. `build` does the same on demand and is what CI runs to validate the documents.
 
@@ -48,7 +49,7 @@ Required fields: `id`, `title`, `summary`. Optional: `aliases`, `tags`, `related
 ## Retrieval flow
 
 1. A user asks about a project topic.
-2. An agent tries a known ID or alias through the JSON index (average O(1) map lookup *after loading the JSON*).
+2. An agent tries a known ID or alias through the JSON index (average O(1) map lookup *after loading the JSON*), or scans `list` to find one; `get <id> --summary` shows the document's sections.
 3. If no known ID exists, the agent queries FTS5 for ranked sections. Query terms are safely quoted and combined with OR. Search is lexical, not semantic.
 4. The agent inspects titles, heading paths and snippets, then requests the exact section it needs by its `id#slug` reference.
 5. Only selected text is presented to the model, preserving original file paths for citations.
@@ -57,7 +58,7 @@ FTS5 query costs depend on posting-list sizes and ranking; the `O(1)` claim appl
 
 ## Repository contents
 
-- `scripts/kb.py`: builder and `build`, `search`, `get` CLI
+- `scripts/kb.py`: builder and `build`, `list`, `search`, `get` CLI
 - `knowledge/`: sample corpus
 - `tests/`: correctness and validation tests
 - `benchmarks/compare.py`: repeatable warm in-process lexical baseline

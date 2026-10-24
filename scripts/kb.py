@@ -245,8 +245,10 @@ def build(root: Path) -> dict:
         key = meta["id"]
         if key in docs:
             raise ValueError(f"Duplicate id: {key}")
+        found = sections(body)
         docs[key] = {"path": rel, "title": meta["title"], "summary": meta["summary"],
-                     "tags": meta["tags"], "related": meta["related"]}
+                     "tags": meta["tags"], "related": meta["related"],
+                     "sections": [[section.slug, section.heading_path] for section in found]}
         for alias in meta["aliases"]:
             alias = alias.strip().casefold()
             if not alias or alias in aliases:
@@ -254,7 +256,7 @@ def build(root: Path) -> dict:
             aliases[alias] = key
         doc_rows.append((key, rel, meta["title"], " ".join(meta["tags"] + meta["aliases"]),
                          meta["summary"]))
-        for section in sections(body):
+        for section in found:
             rows.append((key, rel, meta["title"], section.heading_path, section.slug,
                          section.content))
     for key, entry in docs.items():
@@ -310,6 +312,12 @@ def ensure_index(root: Path) -> dict:
         build(root)
         index = load_index(root)
     return index
+
+
+def list_documents(index: dict) -> list[dict]:
+    """Every document's id, path, title and summary, sorted by id."""
+    return [{"id": key, "path": entry["path"], "title": entry["title"],
+             "summary": entry["summary"]} for key, entry in sorted(index["by_id"].items())]
 
 
 def resolve(index: dict, name: str) -> str:
@@ -454,12 +462,21 @@ def render_search(groups: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def render_list(documents: list[dict]) -> str:
+    """One `id  title: summary` line per document."""
+    return "\n".join(f"{doc['id']}  {one_line(doc['title'])}: {one_line(doc['summary'])}"
+                     for doc in documents) or "no documents"
+
+
 def render_get(result: dict) -> str:
     if "content" not in result:  # --summary
         lines = [f"{result['id']}  {one_line(result['title'])}", f"path: {result['path']}",
                  f"summary: {one_line(result['summary'])}"]
         lines += [f"{field}: {', '.join(result[field])}"
                   for field in ("tags", "related") if result[field]]
+        if result.get("sections"):
+            lines.append("sections:")
+            lines += [f"  {result['id']}#{slug}  {heading}" for slug, heading in result["sections"]]
         return "\n".join(lines)
     where = result["path"] + (f"#{result['slug']}" if "slug" in result else "")
     label = one_line(result["title"]) + (f" > {result['heading']}" if "heading" in result else "")
@@ -474,6 +491,8 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("build", parents=[shared],
                         help="validate the knowledge files and rebuild the index")
+    commands.add_parser("list", parents=[shared],
+                        help="one line per document: id, title and summary")
     q = commands.add_parser("search", parents=[shared], help="find the best-matching sections")
     q.add_argument("query")
     q.add_argument("--limit", type=int, default=5)
@@ -487,6 +506,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "build":
             output = build(args.root)
             text = f"indexed {output['documents']} documents, {output['sections']} sections"
+        elif args.command == "list":
+            output = list_documents(ensure_index(args.root))
+            text = render_list(output)
         elif args.command == "search":
             if not 1 <= args.limit <= 100:
                 raise ValueError("--limit must be between 1 and 100")
