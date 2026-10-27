@@ -1,14 +1,38 @@
 import io
 import json
+import os
 import shutil
 import sqlite3
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from benchmarks import retrieval
 from scripts import kb
+
+# Stands in for QMD: logs each command, keeps the exported folder per index, and answers a
+# vector query with the exported section files listed in $FAKE_QMD_HITS that exist.
+FAKE_QMD = """
+import json, os, sys
+from pathlib import Path
+
+state = Path(os.environ["FAKE_QMD_STATE"])
+name, command, args = sys.argv[2], sys.argv[3], sys.argv[4:]
+with (state / "calls").open("a") as log:
+    log.write(command + "\\n")
+config = state / (name + ".json")
+if command == "collection":
+    if config.exists():
+        sys.exit("Collection 'sections' already exists.")
+    config.write_text(json.dumps(args[1]))
+elif command == "query":
+    folder = Path(json.loads(config.read_text()))
+    hits = [path for path in os.environ["FAKE_QMD_HITS"].split(",") if (folder / path).is_file()]
+    print(json.dumps([{"file": "qmd://sections/" + path + "?index=" + name} for path in hits]))
+"""
 
 
 def sample(id_, title="Sample", aliases="[]", related="[]", body="# How it works\nToken rotation protects accounts.\n"):
@@ -83,6 +107,14 @@ class KBTests(unittest.TestCase):
             sections = [hit for hit in kb.search(self.root, question["query"]) if "slug" in hit]
             self.assertEqual(f"{sections[0]['id']}#{sections[0]['slug']}", question["expect"],
                              question["query"])
+
+    def test_search_can_require_every_word(self):
+        self.put("a.md", sample("auth", body="# Rotation\nRotate tokens.\n# Logout\nEnd it.\n"))
+        kb.build(self.root)
+        self.assertEqual(len(kb.search(self.root, "rotate logout")), 2)
+        self.assertEqual(kb.search(self.root, "rotate logout", match_all=True), [])
+        self.assertEqual([hit["slug"] for hit in kb.search(self.root, "rotate tokens",
+                                                            match_all=True)], ["rotation"])
 
     def test_search_matches_other_word_forms(self):
         body = ("# Refresh\nRotate refresh credentials. Revoked sessions are refused. "
@@ -330,6 +362,71 @@ class KBTests(unittest.TestCase):
         for conn in opened:
             with self.assertRaises(sqlite3.ProgrammingError):  # raised only by closed connections
                 conn.execute("SELECT 1")
+
+    def test_retrieval_corpus_labels(self):
+        """Labels name real sections, paraphrases share no content word with theirs, and
+        exact and identifier questions keep ranking their section first."""
+        repo = Path(__file__).resolve().parents[1]
+        shutil.copytree(repo / "benchmarks" / "corpus" / "knowledge", self.root / "knowledge",
+                        dirs_exist_ok=True)
+        kb.build(self.root)
+        index = kb.load_index(self.root)
+        for question in retrieval.questions():
+            doc, _, slug = question["expect"].partition("#")
+            self.assertIn(slug, dict(index["by_id"][doc]["sections"]), question["expect"])
+            if question["kind"] == "paraphrase":
+                self.assertEqual(retrieval.shared_words(question, index, self.root), set(),
+                                 question["query"])
+            if question["kind"] in ("exact", "identifier"):
+                top = [hit for hit in kb.search(self.root, question["query"]) if "slug" in hit][0]
+                self.assertEqual(f"{top['id']}#{top['slug']}", question["expect"],
+                                 question["query"])
+
+    @unittest.skipIf(os.name == "nt", "the fake qmd runs through its #! line")
+    def test_semantic_search_merges_qmd_vector_hits(self):
+        self.put("auth.md", sample("auth", body="# Rotation\nRotate refresh tokens.\n"
+                                                "# Revocation\nEnd sessions on logout.\n"))
+        fake, state = self.root / "fake-qmd", self.root / "qmd-state"
+        fake.write_text(f"#!{sys.executable}\n{FAKE_QMD}", encoding="utf-8")
+        fake.chmod(0o755)
+        state.mkdir()
+        env = {"KB_QMD": str(fake), "FAKE_QMD_STATE": str(state),
+               "FAKE_QMD_HITS": "auth/revocation.md,auth/rotation.md,gone/missing.md"}
+        with mock.patch.dict(os.environ, env):
+            hits = kb.semantic_search(self.root, "rotate")
+            # Found by words and by meaning, then by meaning only; an unknown file is skipped.
+            self.assertEqual([hit["slug"] for hit in hits], ["rotation", "revocation"])
+            # A document matched only on its summary is not a section, so it is left out.
+            self.assertEqual([hit.get("slug") for hit in kb.search(self.root, "about")], [None])
+            self.assertEqual([hit["slug"] for hit in kb.semantic_search(self.root, "about")],
+                             ["revocation", "rotation"])
+            self.assertEqual(hits[1]["snippet"], "End sessions on logout.")
+            self.assertEqual(hits[0]["score"], round(1 / 61 + 1 / 62, 4))
+            exported = self.root / ".knowledge" / "sections" / "auth" / "revocation.md"
+            self.assertEqual(exported.read_text(encoding="utf-8"),
+                             "# Sample > Revocation\n\nEnd sessions on logout.\n")
+            kb.semantic_search(self.root, "rotate")  # unchanged knowledge: no refresh
+            self.put("auth.md", sample("auth", body="# Rotation\nRotate keys.\n"))
+            code, out, _ = self.cli("search", "rotate", "--semantic")
+        self.assertEqual((code, out), (0, "knowledge/auth.md  Sample\n"
+                                          "  auth#rotation  Rotation: Rotate keys.\n"))
+        self.assertFalse(exported.exists())
+        self.assertEqual((state / "calls").read_text(encoding="utf-8").split(),
+                         ["collection", "update", "embed", "query", "query", "query",
+                          "collection", "update", "embed", "query"])
+
+    def test_semantic_search_needs_qmd_and_safe_ids(self):
+        self.put("auth.md", sample("auth"))
+        with mock.patch.dict(os.environ, {"KB_QMD": "", "PATH": ""}):
+            code, _, err = self.cli("search", "token", "--semantic")
+        self.assertEqual(code, 1)
+        self.assertIn("--semantic needs QMD", err)
+        self.put("auth.md", sample("a/../../outside"))  # a valid id, but not as a folder name
+        with mock.patch.dict(os.environ, {"KB_QMD": sys.executable}):
+            code, _, err = self.cli("search", "token", "--semantic")
+        self.assertEqual(code, 1)
+        self.assertIn("cannot use the id 'a/../../outside'", err)
+        self.assertFalse((self.root / "outside").exists())
 
 
 if __name__ == "__main__":
